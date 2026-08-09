@@ -1,0 +1,91 @@
+name: Katabump Auto Renew_C
+
+on:
+  schedule:
+    - cron: '50 0 * * *'   # 每天 UTC 0：50 触发（北京时间 8：50），由脚本判断是否执行，四天一续
+  workflow_dispatch:      # 允许手动触发
+
+jobs:
+  Renew-Katabump:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write  
+      contents: read
+
+    steps:
+      # 1. 拉取仓库代码
+      - uses: actions/checkout@v6
+
+      # 2. 日期检查（决定今天是否该执行）
+      - name: Check interval
+        id: check
+        run: |
+          START="2026-07-27"
+          TODAY=$(date -u +%F)
+          start_sec=$(date -d "$START" +%s)
+          today_sec=$(date -d "$TODAY" +%s)
+          days=$(( (today_sec - start_sec) / 86400 ))
+          echo "Days since $START: $days"
+          if (( days % 4 == 0 )); then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 3. 测试输出（可删除，仅用于演示条件生效）
+      - name: Run job
+        if: steps.check.outputs.should_run == 'true'
+        run: echo "真正执行工作流"
+
+      # 4. 设置 Python（仅在满足条件时运行）
+      - name: ⚙ 设置 Python
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # 5. 安装系统依赖和 Python 依赖（仅在满足条件时运行）
+      - name: 🛠️ 安装系统依赖和python依赖
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
+          pip install seleniumbase requests
+          seleniumbase install chromedriver
+
+      # 6. 设置代理（仅在满足条件时运行）
+      - name: ⚙ 设置代理 (sing-box)
+        if: steps.check.outputs.should_run == 'true'
+        continue-on-error: true
+        env:
+          NODE_LINK: ${{ secrets.NODE_LINK }}
+        run: |
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+
+      # 7. 运行续期脚本（仅在满足条件时运行）
+      - name: 🚀 运行续期脚本
+        if: steps.check.outputs.should_run == 'true'
+        env:
+          KATABUMP_EMAIL_C: ${{ secrets.KATABUMP_EMAIL_C }}
+          KATABUMP_PASSWORD_C: ${{ secrets.KATABUMP_PASSWORD_C }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            python3 app_C.py
+
+      # 8. 清理旧的工作流运行记录（无论是否满足周期都执行，避免堆积）
+      - name: 🧹 清理旧的工作流运行记录
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
+          count=0
+          for run_id in $runs; do
+            count=$((count + 1))
+            if [ $count -gt 1 ]; then
+              echo "删除运行记录: $run_id"
+              gh run delete $run_id || true
+            fi
+          done
