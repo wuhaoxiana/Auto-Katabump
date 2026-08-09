@@ -26,7 +26,7 @@ jobs:
           today_sec=$(date -d "$TODAY" +%s)
           days=$(( (today_sec - start_sec) / 86400 ))
           echo "Days since $START: $days"
-          if (( days % 4 == 0 )); then
+          if (( days % 1 == 0 )); then
             echo "should_run=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_run=false" >> "$GITHUB_OUTPUT"
