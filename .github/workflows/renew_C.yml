@@ -58,7 +58,7 @@ jobs:
         if: steps.check.outputs.should_run == 'true'
         continue-on-error: true
         env:
-          NODE_LINK: ${{ secrets.NODE_LINK }}
+          NODE_LINK: ${{ secrets.NODE_LINK_C }}
         run: |
           bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
