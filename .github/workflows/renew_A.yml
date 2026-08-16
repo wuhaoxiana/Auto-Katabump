@@ -13,8 +13,8 @@ jobs:
       contents: read
 
     steps:
-      # 1. 日期检查（决定今天是否该执行）
-      - name: Check interval
+      # 日期检查（决定今天是否该执行）
+      - name: 📅 日期检查
         id: check
         run: |
           START="2026-07-27"
@@ -29,19 +29,19 @@ jobs:
             echo "should_run=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # 2. 拉取仓库代码
+      # 拉取仓库代码
       - name: 📥 拉取仓库代码
         if: steps.check.outputs.should_run == 'true'
         uses: actions/checkout@v6
 
-      # 3. 设置 Python（仅在满足条件时运行）
+      # 设置 Python（仅在满足条件时运行）
       - name: ⚙ 设置 Python
         if: steps.check.outputs.should_run == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
-      # 4. 安装系统依赖和 Python 依赖（仅在满足条件时运行）
+      # 安装系统依赖和 Python 依赖（仅在满足条件时运行）
       - name: 🛠️ 安装系统依赖和python依赖
         if: steps.check.outputs.should_run == 'true'
         run: |
@@ -50,7 +50,7 @@ jobs:
           pip install seleniumbase requests
           seleniumbase install chromedriver
 
-      # 5. 设置代理（仅在满足条件时运行）
+      # 设置代理（仅在满足条件时运行）
       - name: ⚙ 设置代理 (sing-box)
         if: steps.check.outputs.should_run == 'true'
         continue-on-error: true
@@ -59,7 +59,7 @@ jobs:
         run: |
           bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
-      # 6. 运行续期脚本（仅在满足条件时运行）
+      # 运行续期脚本（仅在满足条件时运行）
       - name: 🚀 运行续期脚本
         if: steps.check.outputs.should_run == 'true'
         env:
@@ -71,7 +71,7 @@ jobs:
           xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
             python3 app_A.py
 
-      # 7. 清理旧的工作流运行记录（无论是否满足周期都执行，避免堆积）
+      # 清理旧的工作流运行记录（无论是否满足周期都执行，避免堆积）
       - name: 🧹 清理旧的工作流运行记录
         if: always()
         env:
