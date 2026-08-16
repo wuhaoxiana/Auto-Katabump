@@ -3,7 +3,7 @@ name: Katabump Auto Renew_A
 on:
   schedule:
     - cron: '50 0 * * *'   # 每天 UTC 1：00 触发（北京时间 9：00），由脚本判断是否执行，四天一续
-  workflow_dispatch:      # 允许手动触发
+  workflow_dispatch:       # 允许手动触发
 
 jobs:
   Renew-Katabump:
