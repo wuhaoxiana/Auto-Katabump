@@ -29,20 +29,33 @@ jobs:
     - name: ⚙ 设置代理 (sing-box)
       continue-on-error: true
       env:
-        NODE_LINK: ${{ secrets.NODE_LINK }}
+        NODE_LINK: ${{ vars.NODE_LINK }}
       run: |
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
-    - name: 🚀 运行续期脚本
+    - name: 🚀 运行多账号续期脚本
       env:
-        KATABUMP_EMAIL: ${{ secrets.KATABUMP_EMAIL }}
-        KATABUMP_PASSWORD: ${{ secrets.KATABUMP_PASSWORD }}
+        KATABUMP_EMAIL: ${{ vars.KATABUMP_EMAIL }}
+        KATABUMP_PASSWORD: ${{ vars.KATABUMP_PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: |
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
-        
+
+    - name: 📸 上传失败截图（便于排查）
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: katabump-failure-screenshots
+        path: |
+          login_load_fail_*.png
+          login_turnstile_fail_*.png
+          login_failed_*.png
+          servers_page_fail_*.png
+        if-no-files-found: ignore
+        retention-days: 7
+
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:
