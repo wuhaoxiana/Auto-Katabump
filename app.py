@@ -7,16 +7,63 @@ import subprocess
 import requests
 from seleniumbase import SB
 
-# 从环境变量获取账号密码和 TG 配置
-EMAIL        = os.environ.get("KATABUMP_EMAIL") or ""    # 登录邮箱
-PASSWORD     = os.environ.get("KATABUMP_PASSWORD") or "" # 账号密码
+# ============================================================
+# 多账号配置（读取 GitHub Actions Variables）
+#   KATABUMP_EMAIL    : 每行一个邮箱
+#   KATABUMP_PASSWORD : 每行一个密码（与邮箱按行对应）
+# TG 通知仍走 Secrets（敏感信息）
+# ============================================================
+
 TG_CHAT_ID   = os.environ.get("TG_CHAT_ID") or ""        # tg通知 chat id(可选)
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN") or ""      # tg通知bot token(可选)
 
 BASE_URL = "https://dashboard.katabump.com"  # 网站链接
 
+
+def _split_lines(raw: str):
+    """把多行 / 逗号 / 分号分隔的配置拆成列表，自动去空行和首尾空格。"""
+    if not raw:
+        return []
+    text = raw.replace("\r\n", "\n").replace("\r", "\n")
+    for sep in (",", ";", "|"):
+        if "\n" not in text and sep in text:
+            text = text.replace(sep, "\n")
+    return [line.strip() for line in text.split("\n") if line.strip()]
+
+
+def load_accounts():
+    """从 Variables 载入多账号列表，返回 [(email, password), ...]。"""
+    emails = _split_lines(os.environ.get("KATABUMP_EMAIL", ""))
+    passwords = _split_lines(os.environ.get("KATABUMP_PASSWORD", ""))
+
+    if not emails or not passwords:
+        print("❌ 未配置 KATABUMP_EMAIL / KATABUMP_PASSWORD（Variables，每行一个）")
+        return []
+
+    if len(emails) != len(passwords):
+        print(
+            f"❌ 账号数量不匹配：邮箱 {len(emails)} 个，密码 {len(passwords)} 个。"
+            "请确保 KATABUMP_EMAIL 与 KATABUMP_PASSWORD 每行一一对应。"
+        )
+        return []
+
+    accounts = list(zip(emails, passwords))
+    print(f"👥 已载入 {len(accounts)} 个账号")
+    return accounts
+
+
+def mask_email(email: str) -> str:
+    """邮箱脱敏：保留用户名前2位和后2位，中间用 **** 代替。"""
+    if "@" in email:
+        name, domain = email.split("@", 1)
+        if len(name) > 4:
+            return f"{name[:2]}****{name[-2:]}@{domain}"
+        return f"{name}@{domain}"
+    return email[:2] + "****"
+
+
 #  Telegram 推送模块
-def send_tg_message(status_icon, status_text, time_left=""):
+def send_tg_message(email, status_icon, status_text, time_left=""):
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         print("ℹ️ 未配置 TG_BOT_TOKEN 或 TG_CHAT_ID，跳过 Telegram 推送。")
         return
@@ -25,29 +72,21 @@ def send_tg_message(status_icon, status_text, time_left=""):
     local_time = time.gmtime(time.time() + 8 * 3600)
     current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
 
-    # 邮箱脱敏：保留用户名前2位和后2位，中间用****代替
-    if '@' in EMAIL:
-        name, domain = EMAIL.split('@', 1)
-        if len(name) > 4:
-            masked_email = f"{name[:2]}****{name[-2:]}@{domain}"
-        else:
-            masked_email = f"{name}@{domain}"
-    else:
-        masked_email = EMAIL[:2] + '****'
-
     text = (
         f"🇫🇷 katabump 续期通知\n\n"
         f"{status_icon} {status_text}\n"
-        f"👤 续期账户: {masked_email}\n"
+        f"👤 续期账户: {mask_email(email)}\n"
         f"⏱️ 续期时间: {current_time_str}"
     )
+    if time_left:
+        text += f"\n📄 页面提示: {time_left}"
 
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TG_CHAT_ID,
         "text": text
     }
-    
+
     try:
         r = requests.post(url, json=payload, timeout=10)
         if r.status_code == 200:
@@ -56,6 +95,42 @@ def send_tg_message(status_icon, status_text, time_left=""):
             print(f"⚠️ Telegram 通知发送失败: {r.text}")
     except Exception as e:
         print(f"⚠️ Telegram 通知发送异常: {e}")
+
+
+def send_tg_summary(results):
+    """所有账号跑完后发送一条汇总通知。"""
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        return
+    if not results:
+        return
+
+    local_time = time.gmtime(time.time() + 8 * 3600)
+    current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
+
+    ok = sum(1 for r in results if r["ok"])
+    total = len(results)
+
+    lines = [
+        "🇫🇷 katabump 多账号续期汇总",
+        "",
+        f"📊 成功 {ok} / 共 {total}",
+        f"⏱️ 完成时间: {current_time_str}",
+        "",
+    ]
+    for idx, r in enumerate(results, 1):
+        lines.append(f"{idx}. {r['icon']} {mask_email(r['email'])} — {r['status']}")
+
+    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
+    try:
+        requests.post(
+            url,
+            json={"chat_id": TG_CHAT_ID, "text": "\n".join(lines)},
+            timeout=10,
+        )
+        print("📩 汇总通知发送成功！")
+    except Exception as e:
+        print(f"⚠️ 汇总通知发送异常: {e}")
+
 
 #  页面注入脚本
 _EXPAND_JS = """
@@ -159,6 +234,7 @@ _ALTCHA_SOLVED_JS = """
 })()
 """
 
+
 #  底层输入工具
 def js_fill_input(sb, selector: str, text: str):
     safe_text = text.replace('\\', '\\\\').replace('"', '\\"')
@@ -177,6 +253,7 @@ def js_fill_input(sb, selector: str, text: str):
     }})()
     """)
 
+
 def _activate_window():
     for cls in ["chrome", "chromium", "Chromium", "Chrome", "google-chrome"]:
         try:
@@ -193,14 +270,6 @@ def _activate_window():
     except Exception:
         pass
 
-# def _xdotool_click(x: int, y: int):
-#     _activate_window()
-#     try:
-#         subprocess.run(["xdotool", "mousemove", "--sync", str(x), str(y)], timeout=3, stderr=subprocess.DEVNULL)
-#         time.sleep(0.15)
-#         subprocess.run(["xdotool", "click", "1"], timeout=2, stderr=subprocess.DEVNULL)
-#     except Exception:
-#         os.system(f"xdotool mousemove {x} {y} click 1 2>/dev/null")
 
 #  人机验证处理（使用 SeleniumBase 内置 uc_gui_click_captcha）
 def handle_turnstile(sb) -> bool:
@@ -243,8 +312,9 @@ def handle_turnstile(sb) -> bool:
     print("  ❌ Turnstile 6 次均失败")
     return False
 
-#  账户登录
-def login(sb) -> bool:
+
+#  账户登录（多账号：email / password 由外部传入）
+def login(sb, email: str, password: str) -> bool:
     print(f"🌐 打开登录页面: {BASE_URL}/auth/login")
     sb.uc_open_with_reconnect(BASE_URL + "/auth/login", reconnect_time=8)
     time.sleep(8)
@@ -274,7 +344,7 @@ def login(sb) -> bool:
             page_title = sb.get_title() or ""
             print(f"  当前 URL: {cur_url}")
             print(f"  当前标题: {page_title}")
-            sb.save_screenshot("login_load_fail.png")
+            sb.save_screenshot(f"login_load_fail_{mask_email(email).replace('@', '_at_')}.png")
             return False
 
     print("🍪 关闭可能的 Cookie 弹窗...")
@@ -287,12 +357,12 @@ def login(sb) -> bool:
     except Exception:
         pass
 
-    print(f"📧 填写邮箱...")
-    js_fill_input(sb, 'input[type="email"]', EMAIL)
+    print(f"📧 填写邮箱: {mask_email(email)}")
+    js_fill_input(sb, 'input[type="email"]', email)
     time.sleep(1)
-    
+
     print("🔑 填写密码...")
-    js_fill_input(sb, 'input[type="password"]', PASSWORD)
+    js_fill_input(sb, 'input[type="password"]', password)
     time.sleep(3)
 
     # 等待 Turnstile 验证框出现（最多 10 秒）
@@ -308,7 +378,7 @@ def login(sb) -> bool:
     if ts_found:
         if not handle_turnstile(sb):
             print("❌ 登录界面的 Turnstile 验证失败")
-            sb.save_screenshot("login_turnstile_fail.png")
+            sb.save_screenshot(f"login_turnstile_fail_{mask_email(email).replace('@', '_at_')}.png")
             return False
     else:
         print("ℹ️ 未检测到 Turnstile")
@@ -329,10 +399,32 @@ def login(sb) -> bool:
     if cur_url.startswith(f"{BASE_URL}/dashboard") or "Dashboard | KataBump" in page_title.lower():
         print(f"✅ 登录成功！(URL: {sb.get_current_url()}, Title: {page_title})")
         return True
-        
+
     print(f"❌ 登录失败，页面未跳转到账户页。(URL: {sb.get_current_url()}, Title: {page_title})")
-    sb.save_screenshot("login_failed.png")
+    sb.save_screenshot(f"login_failed_{mask_email(email).replace('@', '_at_')}.png")
     return False
+
+
+def logout(sb):
+    """退出当前账号，清理 cookie / storage，为下一个账号做准备。"""
+    print("🚪 退出当前账号并清理会话...")
+    try:
+        sb.uc_open_with_reconnect(BASE_URL + "/auth/logout", reconnect_time=4)
+        time.sleep(3)
+    except Exception:
+        pass
+    try:
+        sb.delete_all_cookies()
+    except Exception:
+        pass
+    try:
+        sb.execute_script(
+            "try { window.localStorage.clear(); window.sessionStorage.clear(); } catch(e) {}"
+        )
+    except Exception:
+        pass
+    time.sleep(1)
+
 
 # ===== 自动续期流程 =====
 
@@ -345,7 +437,7 @@ def _read_alert(sb):
         return ""
 
 
-def _goto_server_detail(sb) -> bool:
+def _goto_server_detail(sb, email: str, result: dict) -> bool:
     """在 Dashboard 首页查找并点击 See 进入服务器详情页"""
     print("\n🖥️  正在进入服务器续期页...")
     time.sleep(5)
@@ -354,7 +446,8 @@ def _goto_server_detail(sb) -> bool:
     alert_text = _read_alert(sb)
     if alert_text and "can't renew" in alert_text.lower():
         print(f"ℹ️  页面顶部提示: {alert_text}")
-        send_tg_message("ℹ️", "⚠️ 未到续期时间", alert_text)
+        send_tg_message(email, "ℹ️", "⚠️ 未到续期时间", alert_text)
+        result.update(ok=False, icon="ℹ️", status="未到续期时间")
         return False
 
     # 多种选择器尝试查找 See 链接
@@ -403,7 +496,8 @@ def _goto_server_detail(sb) -> bool:
                     print(f"       - [{txt}] -> {href}")
         except Exception:
             pass
-        sb.save_screenshot("servers_page_fail.png")
+        sb.save_screenshot(f"servers_page_fail_{mask_email(email).replace('@', '_at_')}.png")
+        result.update(ok=False, icon="❌", status="未找到服务器入口")
         return False
 
     print("🖱️  点击 'See' 进入服务器详情页...")
@@ -446,105 +540,6 @@ def _open_renew_modal(sb) -> bool:
         return False
 
 
-# def _solve_altcha(sb) -> bool:
-#     """处理 ALTCHA 人机验证"""
-#     print("\n🔐 处理 ALTCHA 人机验证...")
-#     time.sleep(2)
-#
-#     # 先检查是否已自动通过
-#     if sb.execute_script(_ALTCHA_SOLVED_JS):
-#         print("✅ ALTCHA 已自动通过")
-#         return True
-#
-#     # 展开模态框内 iframe 并获取坐标
-#     coords = None
-#     try:
-#         coords = sb.execute_script(_ALTCHA_EXPAND_JS)
-#     except Exception:
-#         pass
-#
-#     if coords:
-#         print(f"  📍 找到模态框内 iframe 坐标: ({coords['cx']}, {coords['cy']})")
-#
-#     # 最多尝试 3 轮
-#     for attempt in range(3):
-#         if sb.execute_script(_ALTCHA_SOLVED_JS):
-#             print(f"✅ ALTCHA 验证通过（第 {attempt + 1} 轮）")
-#             return True
-#
-#         # 策略 1: xdotool 物理点击 iframe 坐标
-#         if coords:
-#             try:
-#                 wi = sb.execute_script(_WININFO_JS)
-#             except Exception:
-#                 wi = {"sx": 0, "sy": 0, "oh": 800, "ih": 768}
-#             bar = wi["oh"] - wi["ih"]
-#             ax  = coords["cx"] + wi["sx"]
-#             ay  = coords["cy"] + wi["sy"] + bar
-#             print(f"🖱️  ALTCHA点击复选框  ({ax}, {ay})")
-#             _xdotool_click(ax, ay)
-#
-#         # 策略 2: SeleniumBase 原生点击模态框内 iframe 元素
-#         try:
-#             iframes = sb.find_elements('div.modal.show iframe')
-#             for iframe in iframes:
-#                 try:
-#                     iframe.click()
-#                     print("🖱️  SeleniumBase 点击模态框 iframe")
-#                 except Exception:
-#                     pass
-#         except Exception:
-#             pass
-#
-#         # 策略 3: JS 遍历模态框内所有可点击元素
-#         sb.execute_script("""
-#             (function(){
-#                 var modal = document.querySelector('div.modal.show');
-#                 if (!modal) return;
-#                 // 点击 iframe
-#                 var iframes = modal.querySelectorAll('iframe');
-#                 for (var i = 0; i < iframes.length; i++) {
-#                     iframes[i].click();
-#                     iframes[i].dispatchEvent(new MouseEvent('click', {bubbles:true}));
-#                 }
-#                 // 点击含 checkbox 的 label
-#                 var labels = modal.querySelectorAll('label');
-#                 for (var j = 0; j < labels.length; j++) {
-#                     var txt = (labels[j].textContent || '').toLowerCase();
-#                     if (txt.includes('robot') || txt.includes('captcha') || txt.includes('verify'))
-#                         labels[j].click();
-#                 }
-#                 // 点击 checkbox
-#                 var cbs = modal.querySelectorAll('input[type="checkbox"]');
-#                 for (var k = 0; k < cbs.length; k++) {
-#                     if (!cbs[k].disabled) {
-#                         cbs[k].click();
-#                         cbs[k].dispatchEvent(new MouseEvent('click', {bubbles:true}));
-#                     }
-#                 }
-#             })()
-#         """)
-#
-#         # 等待验证结果
-#         for _ in range(6):
-#             time.sleep(1)
-#             if sb.execute_script(_ALTCHA_SOLVED_JS):
-#                 print(f"✅ ALTCHA 验证通过（第 {attempt + 1} 轮）")
-#                 return True
-#
-#         print(f"  ⚠️ 第 {attempt + 1} 轮未通过，重试...")
-#         # 重新获取坐标（iframe 可能已重新渲染）
-#         try:
-#             new_coords = sb.execute_script(_ALTCHA_EXPAND_JS)
-#             if new_coords:
-#                 coords = new_coords
-#         except Exception:
-#             pass
-#
-#     print("  ❌ ALTCHA 3 轮均失败")
-#     return False
-
-
 def _submit_renew(sb):
     """点击模态框内的 Renew 提交按钮"""
     print("🖱️  点击模态框中的 Renew 按钮...")
@@ -564,7 +559,7 @@ def _submit_renew(sb):
     time.sleep(8)
 
 
-def _check_renew_result(sb):
+def _check_renew_result(sb, email: str, result: dict):
     """读取页面 alert 提示，判断续期结果并推送 TG 通知"""
     print("\n📋 检查续期结果...")
     alert_text = _read_alert(sb)
@@ -576,41 +571,75 @@ def _check_renew_result(sb):
         print(f"📩 页面提示: {alert_text}")
         low = alert_text.lower()
         if "can't renew" in low or "unable" in low:
-            send_tg_message("⏳", "未到续期时间", alert_text)
-        elif any(kw in low for kw in ( "renewed", "success", "extended")):
-            send_tg_message("✅", "续期成功", alert_text)
+            send_tg_message(email, "⏳", "未到续期时间", alert_text)
+            result.update(ok=False, icon="⏳", status="未到续期时间")
+        elif any(kw in low for kw in ("renewed", "success", "extended")):
+            send_tg_message(email, "✅", "续期成功", alert_text)
+            result.update(ok=True, icon="✅", status="续期成功")
         else:
-            send_tg_message("ℹ️", "续期操作已执行", alert_text)
+            send_tg_message(email, "ℹ️", "续期操作已执行", alert_text)
+            result.update(ok=True, icon="ℹ️", status="续期操作已执行")
     else:
         print("ℹ️ 未检测到明确的提示框，可能续期操作未生效")
-        send_tg_message("ℹ️", "续期操作已执行", "未检测到明确提示")
+        send_tg_message(email, "ℹ️", "续期操作已执行", "未检测到明确提示")
+        result.update(ok=True, icon="ℹ️", status="续期操作已执行（无提示）")
 
 
-def renew_server(sb):
-    """登录成功后调用：自动进入详情页 -> Renew -> ALTCHA -> 提交"""
+def renew_server(sb, email: str, result: dict):
+    """登录成功后调用：自动进入详情页 -> Renew -> 提交"""
     print("\n" + "#" * 25)
     print("  开始自动续期流程")
     print("#" * 25)
 
-    if not _goto_server_detail(sb):
+    if not _goto_server_detail(sb, email, result):
         return
 
     if not _open_renew_modal(sb):
+        result.update(ok=False, icon="❌", status="Renew 按钮/模态框异常")
         return
 
-    # altcha_ok = _solve_altcha(sb)
-    # if not altcha_ok:
-    #     print("⚠️ ALTCHA 验证未通过，仍尝试提交 Renew...")
-
     _submit_renew(sb)
-    _check_renew_result(sb)
+    _check_renew_result(sb, email, result)
+
+
+def process_account(sb, email: str, password: str, index: int, total: int) -> dict:
+    """处理单个账号：登录 -> 续期 -> 退出，返回结果字典。"""
+    print("\n" + "=" * 46)
+    print(f"  账号 [{index}/{total}] {mask_email(email)}")
+    print("=" * 46)
+
+    result = {"email": email, "ok": False, "icon": "❌", "status": "未执行"}
+
+    try:
+        if login(sb, email, password):
+            renew_server(sb, email, result)
+        else:
+            print("\n❌ 登录失败，跳过该账号的续期操作。")
+            send_tg_message(email, "❌", "登录失败", "未知")
+            result.update(ok=False, icon="❌", status="登录失败")
+    except Exception as e:
+        print(f"❌ 账号处理异常: {e}")
+        send_tg_message(email, "❌", "处理异常", str(e)[:200])
+        result.update(ok=False, icon="❌", status=f"异常: {str(e)[:60]}")
+    finally:
+        try:
+            logout(sb)
+        except Exception:
+            pass
+
+    return result
 
 
 #  脚本执行入口 (可选代理)
 def main():
     print("#" * 25)
-    print("   katabump 自动登录续期")
+    print("   katabump 多账号自动登录续期")
     print("#" * 25)
+
+    accounts = load_accounts()
+    if not accounts:
+        print("❌ 无可用账号，脚本退出。")
+        return 1
 
     IS_PROXY = os.environ.get("IS_PROXY", "false").lower() == "true"
     proxy_str = os.environ.get("PROXY_SERVER", "").strip() or "http://127.0.0.1:1081"
@@ -621,21 +650,38 @@ def main():
         sb_kwargs["proxy"] = proxy_str
     else:
         print("🌐 未使用代理，直连访问")
-    
+
     print("🚀 启动浏览器...")
+    results = []
+    total = len(accounts)
+
     with SB(**sb_kwargs) as sb:
-        # print("✅ 浏览器已启动")
         try:
             sb.open("https://api.ip.sb/ip")
             print(f"📍  当前出口IP: {sb.get_text('body')}")
         except Exception:
             pass
 
-        if login(sb):
-            renew_server(sb)   # 登录成功后自动续期
-        else:
-            print("\n❌ 登录失败，终止后续续期操作。")
-            send_tg_message("❌", "登录失败", "未知")
+        for idx, (email, password) in enumerate(accounts, 1):
+            results.append(process_account(sb, email, password, idx, total))
+            if idx < total:
+                print("\n⏳ 等待 8 秒后处理下一个账号...")
+                time.sleep(8)
+
+    # 汇总输出
+    print("\n" + "#" * 46)
+    print("  全部账号处理完毕，结果汇总")
+    print("#" * 46)
+    ok = sum(1 for r in results if r["ok"])
+    for idx, r in enumerate(results, 1):
+        print(f"  {idx}. {r['icon']} {mask_email(r['email'])} — {r['status']}")
+    print(f"\n📊 成功 {ok} / 共 {total}")
+
+    send_tg_summary(results)
+
+    # 全部失败时以非零码退出，方便 Actions 标红
+    return 0 if ok > 0 else 1
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
