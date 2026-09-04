@@ -65,7 +65,7 @@ jobs:
           python3 app.py
 
     - name: 🧹 清理旧的工作流运行记录
-      if: always()
+      if: steps.check.outputs.should_run == 'true'
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
