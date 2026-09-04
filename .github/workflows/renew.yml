@@ -11,15 +11,34 @@ jobs:
     permissions:
       actions: write  
       contents: read
-    
+
     steps:
-    - uses: actions/checkout@v6
+    - name: 📅 日期检查
+      id: check
+      run: |
+        START="2026-07-27"
+        TODAY=$(date -u +%F)
+        start_sec=$(date -d "$START" +%s)
+        today_sec=$(date -d "$TODAY" +%s)
+        days=$(( (today_sec - start_sec) / 86400 ))
+        echo "Days since $START: $days"
+        if (( days % 4 == 0 )); then
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "should_run=false" >> "$GITHUB_OUTPUT"
+        fi
+    
+    - name: 📥 下载代码
+      if: steps.check.outputs.should_run == 'true'
+      uses: actions/checkout@v6
     - name: ⚙ 设置 Python
+      if: steps.check.outputs.should_run == 'true'
       uses: actions/setup-python@v6
       with:
         python-version: '3.12'
 
     - name: 🛠️ 安装系统依赖和python依赖
+      if: steps.check.outputs.should_run == 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
@@ -27,6 +46,7 @@ jobs:
         seleniumbase install chromedriver
 
     - name: ⚙ 设置代理 (sing-box)
+      if: steps.check.outputs.should_run == 'true'
       continue-on-error: true
       env:
         NODE_LINK: ${{ vars.NODE_LINK }}
@@ -34,6 +54,7 @@ jobs:
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
     - name: 🚀 运行多账号续期脚本
+      if: steps.check.outputs.should_run == 'true'
       env:
         KATABUMP_EMAIL: ${{ vars.KATABUMP_EMAIL }}
         KATABUMP_PASSWORD: ${{ vars.KATABUMP_PASSWORD }}
@@ -42,19 +63,6 @@ jobs:
       run: |
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
-
-    - name: 📸 上传失败截图（便于排查）
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: katabump-failure-screenshots
-        path: |
-          login_load_fail_*.png
-          login_turnstile_fail_*.png
-          login_failed_*.png
-          servers_page_fail_*.png
-        if-no-files-found: ignore
-        retention-days: 7
 
     - name: 🧹 清理旧的工作流运行记录
       if: always()
