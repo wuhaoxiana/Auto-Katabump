@@ -60,15 +60,15 @@ jobs:
       if: steps.check.outputs.should_run == 'true'
       continue-on-error: true
       env:
-        NODE_LINK: ${{ vars.NODE_LINK }}
+        NODE_LINK: ${{ secrets.NODE_LINK }}
       run: |
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
     - name: 🚀 运行多账号续期脚本
       if: steps.check.outputs.should_run == 'true'
       env:
-        KATABUMP_EMAIL: ${{ vars.KATABUMP_EMAIL }}
-        KATABUMP_PASSWORD: ${{ vars.KATABUMP_PASSWORD }}
+        KATABUMP_EMAIL: ${{ secrets.KATABUMP_EMAIL }}
+        KATABUMP_PASSWORD: ${{ secrets.KATABUMP_PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         SELECTED_ACCOUNTS: ${{ inputs.accounts }}
