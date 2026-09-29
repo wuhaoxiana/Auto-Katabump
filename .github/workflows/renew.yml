@@ -4,6 +4,12 @@ on:
   schedule:
   - cron: '50 0 * * *'  # 每天 UTC 1点 (北京时间 9点) 运行,根据服务到期时间自行修改
   workflow_dispatch: # 允许手动触发
+    inputs:
+      accounts:
+        description: '要续期的账号序号（Variables 中的行号），如 1,3 或 2-4，留空=全部'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   Renew-Katabump:
@@ -13,9 +19,14 @@ jobs:
       contents: read
 
     steps:
-    - name: 📅 日期检查
+    - name: 📅 日期检查（手动触发时跳过）
       id: check
       run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "🖐️ 手动触发，跳过日期检查，直接运行"
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         START="2026-07-27"
         TODAY=$(date -u +%F)
         start_sec=$(date -d "$START" +%s)
@@ -60,6 +71,7 @@ jobs:
         KATABUMP_PASSWORD: ${{ vars.KATABUMP_PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        SELECTED_ACCOUNTS: ${{ inputs.accounts }}
       run: |
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 app.py
