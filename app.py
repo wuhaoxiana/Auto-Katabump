@@ -31,6 +31,40 @@ def _split_lines(raw: str):
     return [line.strip() for line in text.split("\n") if line.strip()]
 
 
+def _parse_selected(raw: str, total: int):
+    """解析手动触发填写的账号序号（如 1,3 或 2-4），返回 0 起始的下标列表。
+
+    序号非法或超出范围时抛 ValueError，避免误跑全部账号。
+    """
+    text = raw.replace("，", ",").replace("、", ",").replace("－", "-").replace(" ", "")
+    if not text:
+        return None  # 留空 = 全部
+
+    picked = set()
+    for part in text.split(","):
+        if not part:
+            continue
+        if "-" in part:
+            a, _, b = part.partition("-")
+            if not (a.isdigit() and b.isdigit()):
+                raise ValueError(f"区间格式不正确: {part}")
+            lo, hi = int(a), int(b)
+            if lo > hi:
+                lo, hi = hi, lo
+            picked.update(range(lo, hi + 1))
+        elif part.isdigit():
+            picked.add(int(part))
+        else:
+            raise ValueError(f"序号格式不正确: {part}")
+
+    if 0 in picked:
+        raise ValueError("账号序号从 1 开始")
+    out_of_range = [p for p in sorted(picked) if p > total]
+    if out_of_range:
+        raise ValueError(f"序号超出范围: {out_of_range}（当前共 {total} 个账号）")
+    return [p - 1 for p in sorted(picked)]
+
+
 def load_accounts():
     """从 Variables 载入多账号列表，返回 [(email, password), ...]。"""
     emails = _split_lines(os.environ.get("KATABUMP_EMAIL", ""))
@@ -48,6 +82,20 @@ def load_accounts():
         return []
 
     accounts = list(zip(emails, passwords))
+
+    # 手动触发时按序号筛选（renew.yml 传入，留空 = 全部）
+    selected_raw = (os.environ.get("SELECTED_ACCOUNTS") or "").strip()
+    if selected_raw:
+        try:
+            idx_list = _parse_selected(selected_raw, len(accounts))
+        except ValueError as e:
+            print(f"❌ 账号序号解析失败: {e}")
+            return []
+        if idx_list is not None:
+            accounts = [accounts[i] for i in idx_list]
+            preview = ", ".join(mask_email(e) for e, _ in accounts)
+            print(f"🎯 手动选择账号 [{selected_raw}]: {preview}")
+
     print(f"👥 已载入 {len(accounts)} 个账号")
     return accounts
 
