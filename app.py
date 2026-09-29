@@ -8,10 +8,10 @@ import requests
 from seleniumbase import SB
 
 # ============================================================
-# 多账号配置（读取 GitHub Actions Variables）
+# 多账号配置（读取 GitHub Actions Secrets）
 #   KATABUMP_EMAIL    : 每行一个邮箱
 #   KATABUMP_PASSWORD : 每行一个密码（与邮箱按行对应）
-# TG 通知仍走 Secrets（敏感信息）
+# TG 通知与代理 (NODE_LINK) 同样走 Secrets（敏感信息）
 # ============================================================
 
 TG_CHAT_ID   = os.environ.get("TG_CHAT_ID") or ""        # tg通知 chat id(可选)
@@ -66,12 +66,12 @@ def _parse_selected(raw: str, total: int):
 
 
 def load_accounts():
-    """从 Variables 载入多账号列表，返回 [(email, password), ...]。"""
+    """从 Secrets 载入多账号列表，返回 [(email, password), ...]。"""
     emails = _split_lines(os.environ.get("KATABUMP_EMAIL", ""))
     passwords = _split_lines(os.environ.get("KATABUMP_PASSWORD", ""))
 
     if not emails or not passwords:
-        print("❌ 未配置 KATABUMP_EMAIL / KATABUMP_PASSWORD（Variables，每行一个）")
+        print("❌ 未配置 KATABUMP_EMAIL / KATABUMP_PASSWORD（Secrets，每行一个）")
         return []
 
     if len(emails) != len(passwords):
