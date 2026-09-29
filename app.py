@@ -62,63 +62,35 @@ def mask_email(email: str) -> str:
     return email[:2] + "****"
 
 
-#  Telegram 推送模块
-def send_tg_message(email, status_icon, status_text, time_left=""):
+#  Telegram 汇总推送模块
+def send_tg_summary(results):
+    """所有账号跑完后，把每个账号的结果汇成一条 TG 通知发送。"""
     if not TG_BOT_TOKEN or not TG_CHAT_ID:
         print("ℹ️ 未配置 TG_BOT_TOKEN 或 TG_CHAT_ID，跳过 Telegram 推送。")
-        return
-
-    # 获取北京时间 (UTC+8)
-    local_time = time.gmtime(time.time() + 8 * 3600)
-    current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
-
-    text = (
-        f"🇫🇷 katabump 续期通知\n\n"
-        f"{status_icon} {status_text}\n"
-        f"👤 续期账户: {mask_email(email)}\n"
-        f"⏱️ 续期时间: {current_time_str}"
-    )
-    if time_left:
-        text += f"\n📄 页面提示: {time_left}"
-
-    url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TG_CHAT_ID,
-        "text": text
-    }
-
-    try:
-        r = requests.post(url, json=payload, timeout=10)
-        if r.status_code == 200:
-            print("📩 Telegram 通知发送成功！")
-        else:
-            print(f"⚠️ Telegram 通知发送失败: {r.text}")
-    except Exception as e:
-        print(f"⚠️ Telegram 通知发送异常: {e}")
-
-
-def send_tg_summary(results):
-    """所有账号跑完后发送一条汇总通知。"""
-    if not TG_BOT_TOKEN or not TG_CHAT_ID:
         return
     if not results:
         return
 
+    # 获取北京时间 (UTC+8)
     local_time = time.gmtime(time.time() + 8 * 3600)
-    current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
+    current_time_str = time.strftime("%Y-%m-%d", local_time)
 
     ok = sum(1 for r in results if r["ok"])
     total = len(results)
 
+    sep = "—" * 10
     lines = [
-        "🇫🇷 katabump 多账号续期汇总",
-        "",
+        "🇫🇷 KataBump 多账号续期汇总",
+        sep,
         f"📊 成功 {ok} / 共 {total}",
-        f"⏱️ 完成时间: {current_time_str}",
-        "",
+        f"🕒 完成时间: {current_time_str}",
+        sep,
     ]
-    for idx, r in enumerate(results, 1):
-        lines.append(f"{idx}. {r['icon']} {mask_email(r['email'])} — {r['status']}")
+    for r in results:
+        lines.append(f"{r['icon']} {r['status']}")
+        lines.append(f"👤 续期账户: {mask_email(r['email'])}")
+        lines.append(f"📄 页面提示: {(r.get('alert') or '无')[:150]}")
+        lines.append(sep)
 
     url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage"
     try:
@@ -127,9 +99,9 @@ def send_tg_summary(results):
             json={"chat_id": TG_CHAT_ID, "text": "\n".join(lines)},
             timeout=10,
         )
-        print("📩 汇总通知发送成功！")
+        print("📩 Telegram 汇总通知发送成功！")
     except Exception as e:
-        print(f"⚠️ 汇总通知发送异常: {e}")
+        print(f"⚠️ Telegram 汇总通知发送异常: {e}")
 
 
 #  页面注入脚本
@@ -446,8 +418,7 @@ def _goto_server_detail(sb, email: str, result: dict) -> bool:
     alert_text = _read_alert(sb)
     if alert_text and "can't renew" in alert_text.lower():
         print(f"ℹ️  页面顶部提示: {alert_text}")
-        send_tg_message(email, "ℹ️", "⚠️ 未到续期时间", alert_text)
-        result.update(ok=False, icon="ℹ️", status="未到续期时间")
+        result.update(ok=False, icon="ℹ️", status="未到续期时间", alert=alert_text)
         return False
 
     # 多种选择器尝试查找 See 链接
@@ -560,7 +531,7 @@ def _submit_renew(sb):
 
 
 def _check_renew_result(sb, email: str, result: dict):
-    """读取页面 alert 提示，判断续期结果并推送 TG 通知"""
+    """读取页面 alert 提示，判断续期结果并记录（最后统一汇总推送）"""
     print("\n📋 检查续期结果...")
     alert_text = _read_alert(sb)
     if not alert_text:
@@ -571,18 +542,14 @@ def _check_renew_result(sb, email: str, result: dict):
         print(f"📩 页面提示: {alert_text}")
         low = alert_text.lower()
         if "can't renew" in low or "unable" in low:
-            send_tg_message(email, "⏳", "未到续期时间", alert_text)
-            result.update(ok=False, icon="⏳", status="未到续期时间")
+            result.update(ok=False, icon="⏳", status="未到续期时间", alert=alert_text)
         elif any(kw in low for kw in ("renewed", "success", "extended")):
-            send_tg_message(email, "✅", "续期成功", alert_text)
-            result.update(ok=True, icon="✅", status="续期成功")
+            result.update(ok=True, icon="✅", status="续期成功", alert=alert_text)
         else:
-            send_tg_message(email, "ℹ️", "续期操作已执行", alert_text)
-            result.update(ok=True, icon="ℹ️", status="续期操作已执行")
+            result.update(ok=True, icon="ℹ️", status="续期操作已执行", alert=alert_text)
     else:
         print("ℹ️ 未检测到明确的提示框，可能续期操作未生效")
-        send_tg_message(email, "ℹ️", "续期操作已执行", "未检测到明确提示")
-        result.update(ok=True, icon="ℹ️", status="续期操作已执行（无提示）")
+        result.update(ok=True, icon="ℹ️", status="续期操作已执行", alert="未检测到明确提示")
 
 
 def renew_server(sb, email: str, result: dict):
@@ -608,19 +575,17 @@ def process_account(sb, email: str, password: str, index: int, total: int) -> di
     print(f"  账号 [{index}/{total}] {mask_email(email)}")
     print("=" * 46)
 
-    result = {"email": email, "ok": False, "icon": "❌", "status": "未执行"}
+    result = {"email": email, "ok": False, "icon": "❌", "status": "未执行", "alert": "无"}
 
     try:
         if login(sb, email, password):
             renew_server(sb, email, result)
         else:
             print("\n❌ 登录失败，跳过该账号的续期操作。")
-            send_tg_message(email, "❌", "登录失败", "未知")
-            result.update(ok=False, icon="❌", status="登录失败")
+            result.update(ok=False, icon="❌", status="登录失败", alert="无")
     except Exception as e:
         print(f"❌ 账号处理异常: {e}")
-        send_tg_message(email, "❌", "处理异常", str(e)[:200])
-        result.update(ok=False, icon="❌", status=f"异常: {str(e)[:60]}")
+        result.update(ok=False, icon="❌", status="处理异常", alert=str(e)[:200])
     finally:
         try:
             logout(sb)
