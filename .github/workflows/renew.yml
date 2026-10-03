@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: write  
-      contents: read
+      contents: write
 
     steps:
     - name: 📅 日期检查（手动触发时跳过）
